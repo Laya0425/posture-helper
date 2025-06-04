@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <title>姿勢偵測助手</title>
+
+  <!-- 字體與樣式 -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC&display=swap" rel="stylesheet">
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Noto Sans TC', sans-serif;
+      background: #f0f0f0;
+    }
+
+   #label-container {
+  position: fixed;
+  top: 30px;
+  left: 30px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+}
+
+.info-box {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 20px;
+  padding: 10px 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 260px;
+  font-size: 20px;
+  font-weight: bold;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.label {
+  color: #333;
+}
+
+.value {
+  color: #007BFF;
+  font-variant-numeric: tabular-nums;
+}
+
+
+   #pet-container {
+  position: fixed;
+  bottom: 0px;
+  left: -20px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+#pet-image {
+  width: 300px;
+  height: auto;
+}
+
+#pet-bubble {
+  background: rgba(255, 255, 255, 0.95);
+  border-radius: 20px;
+  padding: 10px 15px;
+  font-size: 18px;
+  color: #333;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+  max-width: 100px;
+  font-weight: 500;
+  line-height: 1.4;
+  position: relative;
+  top: -200px;   
+  left: -90px;
+}
+
+    #canvas {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      z-index: 0;
+      object-fit: contain;
+    }
+  </style>
+
+  <!-- TensorFlow + Teachable Machine -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8/dist/teachablemachine-pose.min.js"></script>
+</head>
+<body>
+
+  <!-- 偵測結果 -->
+  <div id="label-container">
+  <div class="info-box">
+    <span class="label">目前姿勢</span>
+    <span class="value" id="posture-status">-</span>
+  </div>
+  <div class="info-box">
+    <span class="label">錯誤次數</span>
+    <span class="value" id="error-count">00</span>
+  </div>
+  <div class="info-box">
+    <span class="label">錯誤總時長</span>
+    <span class="value" id="error-duration">00:00</span>
+  </div>
+</div>
+
+
+  <!-- 桌面寵物 -->
+<div id="pet-container">
+  <img id="pet-image" src="pet_正確姿勢.png" alt="桌面寵物">
+    <div id="pet-bubble">請保持正確姿勢</div>
+</div>
+
+  <!-- 畫布 -->
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const tipMap = {
+  "正確姿勢": "Nice！",
+  "歪頭": "好歪",
+  "身體斜一邊": "脊椎側彎警告！",
+  "低頭": "醒醒~",
+  "趴著": "老闆在你後面"
+};
+
+    const URL = "./my_model/";
+    const flip = true;
+
+    let model, webcam, ctx, labelContainer, maxPredictions;
+    let errorCount = 0;
+    let errorDuration = 0;
+    let isError = false;
+    let lastErrorTime = null;
+
+    async function init() {
+      const modelURL = URL + "model.json";
+      const metadataURL = URL + "metadata.json";
+
+      model = await tmPose.load(modelURL, metadataURL);
+      maxPredictions = model.getTotalClasses();
+
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      webcam = new tmPose.Webcam(width, height, flip);
+      await webcam.setup({ width: 1920, height: 1080 });
+      await webcam.play();
+      window.requestAnimationFrame(loop);
+
+      const canvas = document.getElementById("canvas");
+      canvas.width = width;
+      canvas.height = height;
+      ctx = canvas.getContext("2d");
+
+      labelContainer = document.getElementById("label-container");
+    }
+
+    async function loop() {
+      webcam.update();
+      await predict();
+      window.requestAnimationFrame(loop);
+    }
+
+    async function predict() {
+      try {
+        const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+        const prediction = await model.predict(posenetOutput);
+
+        let maxProb = 0;
+        let maxIndex = 0;
+        for (let i = 0; i < prediction.length; i++) {
+          if (prediction[i].probability > maxProb) {
+            maxProb = prediction[i].probability;
+            maxIndex = i;
+          }
+        }
+
+        const className = prediction[maxIndex].className;
+
+        const petImage = document.getElementById("pet-image");
+        const petMap = {
+          "歪頭": "pet_歪頭.png",
+          "身體斜一邊": "pet_身體斜一邊.png",
+          "低頭": "pet_低頭.png",
+          "趴著": "pet_趴著.png",
+          "正確姿勢": "pet_正確姿勢.png"
+        };
+        if (petMap[className]) {
+          petImage.src = petMap[className];
+        }
+
+        // ===== 錯誤次數與時長邏輯 =====
+        const isCorrect = className === "正確姿勢";
+        const now = Date.now();
+
+        if (!isCorrect) {
+          if (!isError) {
+            errorCount += 1;
+            lastErrorTime = now;
+            isError = true;
+          }
+          if (lastErrorTime !== null) {
+            const delta = (now - lastErrorTime) / 1000;
+            errorDuration += delta;
+            lastErrorTime = now;
+          }
+        } else {
+          isError = false;
+          lastErrorTime = null;
+        }
+
+        // 更新文字 UI（已移除機率 %）
+        document.getElementById("posture-status").textContent = className === "正確姿勢" ? "正確" : className;;
+
+document.getElementById("error-count").textContent = errorCount.toString().padStart(2, '0');
+const tip = tipMap[className] || "";
+document.getElementById("pet-bubble").textContent = tip;
+
+const mins = Math.floor(errorDuration / 60);
+const secs = Math.floor(errorDuration % 60);
+document.getElementById("error-duration").textContent =
+  `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+
+        drawPose();
+      } catch (err) {
+        console.error("predict 發生錯誤：", err);
+        document.getElementById("posture-status").innerText =
+          "偵測失敗，請檢查攝影機或模型路徑";
+      }
+    }
+
+    function drawPose() {
+      if (webcam.canvas) {
+        ctx.drawImage(webcam.canvas, 0, 0);
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
