@@ -1,0 +1,1 @@
+{"tfjsVersion":"1.7.4","tmVersion":"0.8.6","packageVersion":"0.8.6","packageName":"@teachablemachine/pose","timeStamp":"2025-06-04T03:40:44.855Z","userMetadata":{},"modelName":"my-pose-model","labels":["正確姿勢","歪頭","身體斜一邊","低頭","趴著"],"modelSettings":{"posenet":{"architecture":"MobileNetV1","outputStride":16,"inputResolution":257,"multiplier":0.75}}}
